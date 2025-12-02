@@ -1,0 +1,20 @@
+FROM onnxruntime-graviton-xnnpack:1.22.0
+
+# Install build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy test file
+COPY test_xnnpack.cpp /test/
+
+# Compile the test
+RUN g++ -o /test/test_xnnpack /test/test_xnnpack.cpp \
+    -I/usr/local/include \
+    -L/usr/local/lib \
+    -lonnxruntime \
+    -Wl,-rpath,/usr/local/lib
+
+# Run the test
+CMD ["/test/test_xnnpack"]
+

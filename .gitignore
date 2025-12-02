@@ -196,3 +196,5 @@ Package.resolved
 .build/
 .swiftpm/
 repros/
+
+onnxruntime-graviton-arm64/

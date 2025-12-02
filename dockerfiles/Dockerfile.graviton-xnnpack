@@ -1,0 +1,74 @@
+# --------------------------------------------------------------
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+# --------------------------------------------------------------
+# Dockerfile to build ONNXRuntime C++ library with XNNPACK for AWS Graviton (ARM64)
+# For use with Go bindings - builds only libonnxruntime.so (no Python wheel)
+#
+# Uses Amazon Linux 2023 for glibc 2.34 compatibility with Graviton instances
+#
+# IMPORTANT: Initialize submodules before building:
+#   git checkout v1.22.0
+#   git submodule update --init --recursive
+#   docker buildx build --platform linux/arm64 -t onnxruntime-graviton-xnnpack:1.22.0 -f dockerfiles/Dockerfile.graviton-xnnpack --load .
+
+FROM amazonlinux:2023 AS builder
+
+# Add source code to /code
+ADD . /code
+
+# Install build dependencies with Python 3.11 (needed for match/case syntax)
+# Note: curl-minimal is already installed in amazonlinux:2023
+RUN dnf install -y \
+    gcc-c++ \
+    gcc \
+    make \
+    git \
+    patch \
+    python3.11 \
+    python3.11-pip \
+    python3.11-devel \
+    tar \
+    gzip \
+    && dnf clean all \
+    && alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && python3 -m pip install numpy
+
+# Install CMake 3.28+ (required by ONNX Runtime v1.22.0)
+RUN CPU_ARCH=$(uname -m) && \
+    CMAKE_VERSION='3.28.3' && \
+    curl -sSL --retry 5 https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${CPU_ARCH}.tar.gz -o /tmp/cmake.tar.gz && \
+    tar -zxf /tmp/cmake.tar.gz --strip=1 -C /usr && \
+    rm -f /tmp/cmake.tar.gz && \
+    cmake --version
+
+# Build ONNX Runtime C++ shared library with XNNPACK (no Python wheel)
+RUN cd /code && \
+    python3 /code/tools/ci_build/build.py --build_dir /code/build/Linux \
+    --allow_running_as_root --skip_submodule_sync \
+    --config Release --build_shared_lib --skip_tests \
+    --update --build --parallel \
+    --use_xnnpack \
+    --cmake_extra_defines ONNXRUNTIME_VERSION=$(cat ./VERSION_NUMBER)
+
+# Runtime stage - minimal image with just the library
+FROM amazonlinux:2023
+
+# Copy built library, headers, and license
+COPY --from=builder /code/build/Linux/Release/libonnxruntime.so.1.22.0 /usr/local/lib/
+COPY --from=builder /code/build/Linux/Release/libonnxruntime.so /usr/local/lib/
+COPY --from=builder /code/include/onnxruntime /usr/local/include/onnxruntime
+COPY --from=builder /code/dockerfiles/LICENSE-IMAGE.txt /LICENSE-IMAGE.txt
+
+# Install minimal runtime dependencies and update library cache
+RUN dnf install -y libstdc++ && dnf clean all && ldconfig
+
+# Set environment
+ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV ONNXRUNTIME_VERSION=1.22.0
+
+# Verify library exists
+RUN ls -la /usr/local/lib/libonnxruntime.so* && \
+    echo "ONNXRuntime library built successfully with XNNPACK for ARM64"
+
+CMD [ "/bin/bash" ]
