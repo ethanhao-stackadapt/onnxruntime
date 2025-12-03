@@ -101,6 +101,7 @@ ORT_API_STATUS_IMPL(OrtApis::SessionOptionsAppendExecutionProvider,
     VitisAI,
     CoreML,
     NvTensorRtRtx,  // TensorRt EP for RTX GPUs.
+    ACL,           // Arm Compute Library EP.
   };
 
   struct EpToAppend {
@@ -109,7 +110,7 @@ ORT_API_STATUS_IMPL(OrtApis::SessionOptionsAppendExecutionProvider,
     const char* canonical_name = nullptr;
   };
 
-  static std::array<EpToAppend, 12> supported_eps = {
+  static std::array<EpToAppend, 13> supported_eps = {
       EpToAppend{EpID::DML, "DML", kDmlExecutionProvider},
       EpToAppend{EpID::QNN, "QNN", kQnnExecutionProvider},
       EpToAppend{EpID::OpenVINO, "OpenVINO", kOpenVINOExecutionProvider},
@@ -121,7 +122,8 @@ ORT_API_STATUS_IMPL(OrtApis::SessionOptionsAppendExecutionProvider,
       EpToAppend{EpID::JS, "JS", kJsExecutionProvider},
       EpToAppend{EpID::VitisAI, "VitisAI", kVitisAIExecutionProvider},
       EpToAppend{EpID::CoreML, "CoreML", kCoreMLExecutionProvider},
-      EpToAppend{EpID::NvTensorRtRtx, "NvTensorRtRtx", kNvTensorRTRTXExecutionProvider}};
+      EpToAppend{EpID::NvTensorRtRtx, "NvTensorRtRtx", kNvTensorRTRTXExecutionProvider},
+      EpToAppend{EpID::ACL, "ACL", kAclExecutionProvider}};
 
   ProviderOptions provider_options;
   OrtStatus* status = ParseProviderOptions(provider_options_keys,
@@ -307,6 +309,20 @@ ORT_API_STATUS_IMPL(OrtApis::SessionOptionsAppendExecutionProvider,
       } else {
         status = create_failed_to_load_provider_status();
       }
+#else
+      status = create_not_supported_status();
+#endif
+      break;
+    }
+    case EpID::ACL: {
+#if defined(USE_ACL)
+      // Check for enable_fast_math option (default: false)
+      bool enable_fast_math = false;
+      auto it = provider_options.find("enable_fast_math");
+      if (it != provider_options.end()) {
+        enable_fast_math = (it->second == "1" || it->second == "true");
+      }
+      options->provider_factories.push_back(ACLProviderFactoryCreator::Create(enable_fast_math));
 #else
       status = create_not_supported_status();
 #endif
