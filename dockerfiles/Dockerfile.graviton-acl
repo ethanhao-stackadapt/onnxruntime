@@ -31,6 +31,7 @@ ARG ACL_ARCH=arm64-v8.2-a
 ADD . /code
 
 # Install build dependencies with Python 3.11 (needed for match/case syntax)
+# Note: scons is not in AL2023 repos, install via pip
 RUN dnf install -y \
     gcc-c++ \
     gcc \
@@ -42,10 +43,9 @@ RUN dnf install -y \
     python3.11-devel \
     tar \
     gzip \
-    scons \
     && dnf clean all \
     && alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
-    && python3 -m pip install numpy
+    && python3 -m pip install numpy scons
 
 # Install CMake 3.28+ (required by ONNX Runtime v1.22.0)
 RUN CPU_ARCH=$(uname -m) && \
@@ -80,6 +80,7 @@ RUN cd /opt && \
     echo "ACL built successfully"
 
 # Build ONNX Runtime C++ shared library with ACL (no Python wheel)
+# Note: --no_kleidiai disables KleidiAI to avoid linking conflicts with ACL
 RUN cd /code && \
     python3 /code/tools/ci_build/build.py --build_dir /code/build/Linux \
     --allow_running_as_root --skip_submodule_sync \
@@ -88,6 +89,7 @@ RUN cd /code && \
     --use_acl \
     --acl_home /opt/ComputeLibrary \
     --acl_libs /opt/ComputeLibrary/build \
+    --no_kleidiai \
     --cmake_extra_defines ONNXRUNTIME_VERSION=$(cat ./VERSION_NUMBER)
 
 # Runtime stage - minimal image with just the library
@@ -103,8 +105,10 @@ COPY --from=builder /code/dockerfiles/LICENSE-IMAGE.txt /LICENSE-IMAGE.txt
 COPY --from=builder /opt/ComputeLibrary/build/libarm_compute.so /usr/local/lib/
 COPY --from=builder /opt/ComputeLibrary/build/libarm_compute_graph.so /usr/local/lib/
 
-# Install minimal runtime dependencies and update library cache
-RUN dnf install -y libstdc++ && dnf clean all && ldconfig
+# Install minimal runtime dependencies, create symlinks, and update library cache
+RUN dnf install -y libstdc++ && dnf clean all && \
+    ln -sf /usr/local/lib/libonnxruntime.so.1.22.0 /usr/local/lib/libonnxruntime.so.1 && \
+    ldconfig
 
 # Set environment
 ENV LD_LIBRARY_PATH=/usr/local/lib

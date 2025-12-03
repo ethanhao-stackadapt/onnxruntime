@@ -1,0 +1,20 @@
+FROM onnxruntime-graviton-acl:1.22.0
+
+# Install build tools (Amazon Linux 2023 uses dnf)
+RUN dnf install -y gcc-c++ && dnf clean all
+
+# Create missing symlink (libonnxruntime.so.1 -> libonnxruntime.so.1.22.0)
+RUN ln -sf /usr/local/lib/libonnxruntime.so.1.22.0 /usr/local/lib/libonnxruntime.so.1 && ldconfig
+
+# Copy test file
+COPY test_acl.cpp /test/
+
+# Compile the test
+RUN g++ -o /test/test_acl /test/test_acl.cpp \
+    -I/usr/local/include \
+    -L/usr/local/lib \
+    -lonnxruntime \
+    -Wl,-rpath,/usr/local/lib
+
+# Run the test
+CMD ["/test/test_acl"]

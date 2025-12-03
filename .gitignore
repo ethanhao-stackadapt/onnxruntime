@@ -197,4 +197,4 @@ Package.resolved
 .swiftpm/
 repros/
 
-onnxruntime-graviton-arm64/
+onnxruntime-graviton-acl-arm64/
