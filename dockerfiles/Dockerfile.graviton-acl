@@ -1,0 +1,118 @@
+# --------------------------------------------------------------
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+# --------------------------------------------------------------
+# Dockerfile to build ONNXRuntime C++ library with ACL (Arm Compute Library) for AWS Graviton (ARM64)
+# For use with Go bindings - builds only libonnxruntime.so (no Python wheel)
+#
+# Uses Amazon Linux 2023 for glibc 2.34 compatibility with Graviton instances
+#
+# IMPORTANT: Initialize submodules before building:
+#   git checkout v1.22.0
+#   git submodule update --init --recursive
+#   docker buildx build --platform linux/arm64 -t onnxruntime-graviton-acl:1.22.0 -f dockerfiles/Dockerfile.graviton-acl --load .
+#
+# Target: AWS Graviton2 (c6g instances) - ARMv8.2-A with NEON and dot product instructions
+#
+# To support older Graviton1 instances in the future, change ACL_ARCH to arm64-v8a:
+#   docker buildx build --platform linux/arm64 --build-arg ACL_ARCH=arm64-v8a -t onnxruntime-graviton-acl:1.22.0 -f dockerfiles/Dockerfile.graviton-acl --load .
+
+FROM amazonlinux:2023 AS builder
+
+# ACL version to build (v24.04 has good Neoverse/Graviton support)
+ARG ACL_VERSION=v24.04
+
+# ACL architecture target for Graviton2 (c6g instances)
+# ARMv8.2-A enables dot product instructions (SDOT/UDOT) for better ML performance
+# To support Graviton1: change to arm64-v8a
+ARG ACL_ARCH=arm64-v8.2-a
+
+# Add source code to /code
+ADD . /code
+
+# Install build dependencies with Python 3.11 (needed for match/case syntax)
+RUN dnf install -y \
+    gcc-c++ \
+    gcc \
+    make \
+    git \
+    patch \
+    python3.11 \
+    python3.11-pip \
+    python3.11-devel \
+    tar \
+    gzip \
+    scons \
+    && dnf clean all \
+    && alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && python3 -m pip install numpy
+
+# Install CMake 3.28+ (required by ONNX Runtime v1.22.0)
+RUN CPU_ARCH=$(uname -m) && \
+    CMAKE_VERSION='3.28.3' && \
+    curl -sSL --retry 5 https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${CPU_ARCH}.tar.gz -o /tmp/cmake.tar.gz && \
+    tar -zxf /tmp/cmake.tar.gz --strip=1 -C /usr && \
+    rm -f /tmp/cmake.tar.gz && \
+    cmake --version
+
+# Clone and build Arm Compute Library (ACL)
+# Note: build=native means compile for the Docker build host's architecture
+RUN cd /opt && \
+    git clone --depth 1 -b ${ACL_VERSION} https://github.com/Arm-software/ComputeLibrary.git && \
+    cd ComputeLibrary && \
+    echo "Building ACL ${ACL_VERSION} with arch=${ACL_ARCH}" && \
+    scons -j$(nproc) \
+        arch=${ACL_ARCH} \
+        os=linux \
+        build=native \
+        Werror=0 \
+        debug=0 \
+        asserts=0 \
+        neon=1 \
+        opencl=0 \
+        embed_kernels=0 \
+        fixed_format_kernels=1 \
+        openmp=0 \
+        cppthreads=1 \
+        examples=0 \
+        validation_tests=0 \
+        benchmark_tests=0 && \
+    echo "ACL built successfully"
+
+# Build ONNX Runtime C++ shared library with ACL (no Python wheel)
+RUN cd /code && \
+    python3 /code/tools/ci_build/build.py --build_dir /code/build/Linux \
+    --allow_running_as_root --skip_submodule_sync \
+    --config Release --build_shared_lib --skip_tests \
+    --update --build --parallel \
+    --use_acl \
+    --acl_home /opt/ComputeLibrary \
+    --acl_libs /opt/ComputeLibrary/build \
+    --cmake_extra_defines ONNXRUNTIME_VERSION=$(cat ./VERSION_NUMBER)
+
+# Runtime stage - minimal image with just the library
+FROM amazonlinux:2023
+
+# Copy built library, headers, and license
+COPY --from=builder /code/build/Linux/Release/libonnxruntime.so.1.22.0 /usr/local/lib/
+COPY --from=builder /code/build/Linux/Release/libonnxruntime.so /usr/local/lib/
+COPY --from=builder /code/include/onnxruntime /usr/local/include/onnxruntime
+COPY --from=builder /code/dockerfiles/LICENSE-IMAGE.txt /LICENSE-IMAGE.txt
+
+# Copy ACL libraries (needed at runtime)
+COPY --from=builder /opt/ComputeLibrary/build/libarm_compute.so /usr/local/lib/
+COPY --from=builder /opt/ComputeLibrary/build/libarm_compute_graph.so /usr/local/lib/
+
+# Install minimal runtime dependencies and update library cache
+RUN dnf install -y libstdc++ && dnf clean all && ldconfig
+
+# Set environment
+ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV ONNXRUNTIME_VERSION=1.22.0
+
+# Verify library exists
+RUN ls -la /usr/local/lib/libonnxruntime.so* && \
+    ls -la /usr/local/lib/libarm_compute*.so && \
+    echo "ONNXRuntime library built successfully with ACL for ARM64"
+
+CMD [ "/bin/bash" ]
