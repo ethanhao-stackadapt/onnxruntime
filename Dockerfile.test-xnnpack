@@ -17,4 +17,3 @@ RUN g++ -o /test/test_xnnpack /test/test_xnnpack.cpp \
 
 # Run the test
 CMD ["/test/test_xnnpack"]
-
