@@ -104,6 +104,24 @@ Make sure to deploy them alongside `libonnxruntime.so`.
 
 ---
 
+## Testing the Builds
+
+Verify the execution providers work correctly:
+
+```bash
+# Test XNNPACK build
+docker build -t test-xnnpack -f Dockerfile.test-xnnpack .
+docker run --platform linux/arm64 --rm test-xnnpack
+
+# Test ACL build
+docker build -t test-acl -f Dockerfile.test-acl .
+docker run --platform linux/arm64 --rm test-acl
+```
+
+Expected output: `✅ [XNNPACK|ACL] ExecutionProvider is AVAILABLE`
+
+---
+
 ## Changes Made to Build Successfully
 
 | File | Change | Reason |
@@ -114,6 +132,7 @@ Make sure to deploy them alongside `libonnxruntime.so`.
 | `Dockerfile.graviton-*` | Install CMake 3.28.3 | ONNX Runtime 1.22.0 requires CMake 3.28+ |
 | `Dockerfile.graviton-xnnpack` | Add `patch` utility | Required by XNNPACK to apply patches during build |
 | `Dockerfile.graviton-acl` | Add `scons` build tool | Required to build ACL from source |
+| `provider_registration.cc` | Added ACL to generic provider API | Enables `AppendExecutionProvider("ACL")` for Go/language wrappers |
 
 ---
 
@@ -128,3 +147,14 @@ Make sure to deploy them alongside `libonnxruntime.so`.
 | Graviton support | Good | Good (Neoverse optimized) |
 
 **Recommendation**: Start with **XNNPACK** for simplicity. Try **ACL** if you need specific operator optimizations or want to benchmark both.
+
+---
+
+## Notes on ACL API
+
+ACL uses a **dedicated C API** (`OrtSessionOptionsAppendExecutionProvider_ACL`) rather than the generic provider API. This means:
+
+- **C++ code**: Use the dedicated function directly (see `test_acl.cpp`)
+- **Go/Python wrappers**: Requires the `provider_registration.cc` change above to use `AppendExecutionProvider("ACL")`
+
+Without the registration change, Go wrappers will error: `Unknown provider name 'ACL'`.
