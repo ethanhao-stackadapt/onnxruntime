@@ -91,7 +91,11 @@ The ACL build requires these libraries at runtime:
 - `libarm_compute.so`
 - `libarm_compute_graph.so`
 
-Make sure to deploy them alongside `libonnxruntime.so`.
+Deploy them alongside `libonnxruntime.so.1.22.0` and set `LD_LIBRARY_PATH`:
+
+```bash
+export LD_LIBRARY_PATH=/path/to/libs:$LD_LIBRARY_PATH
+```
 
 ---
 
@@ -132,6 +136,7 @@ Expected output: `✅ [XNNPACK|ACL] ExecutionProvider is AVAILABLE`
 | `Dockerfile.graviton-*` | Install CMake 3.28.3 | ONNX Runtime 1.22.0 requires CMake 3.28+ |
 | `Dockerfile.graviton-xnnpack` | Add `patch` utility | Required by XNNPACK to apply patches during build |
 | `Dockerfile.graviton-acl` | Add `scons` build tool | Required to build ACL from source |
+| `Dockerfile.graviton-acl` | Add `--no_kleidiai` flag | Avoids linking conflicts between KleidiAI and ACL |
 | `provider_registration.cc` | Added ACL to generic provider API | Enables `AppendExecutionProvider("ACL")` for Go/language wrappers |
 
 ---
